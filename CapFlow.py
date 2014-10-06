@@ -61,7 +61,7 @@ class CapFlow(app_manager.RyuApp):
         print "Install sending to controller rule"
         util.add_flow(datapath,
             parser.OFPMatch(),
-            [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER)],
+            [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)],
             priority=2,
         )
 
@@ -99,7 +99,7 @@ class CapFlow(app_manager.RyuApp):
                     eth_dst=nw_src,
                     eth_type=Proto.ETHER_ARP,
                 ),
-                [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER), ],
+                [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)],
                 priority=1000,
                 msg=msg, in_port=in_port,
             )

@@ -19,7 +19,7 @@ def add_flow(datapath, match, actions, priority=None, command=None, msg=None,in_
                 datapath=datapath,
                 actions=[parser.OFPActionOutput(ofproto.OFPP_TABLE)],
                 in_port=in_port,
-                buffer_id=0xffffffff,
+                buffer_id=msg.buffer_id,
                 data=msg.data)
         datapath.send_msg(out)
 
