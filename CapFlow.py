@@ -24,6 +24,14 @@ import util
 from rest import UserController
 
 
+class Priority(object):
+    DEFAULT = 500
+    HIJACK = 1000
+    PAID = 5000
+    ARP = 1000
+    UNKNOWN = 2000
+
+
 class Proto(object):
     ETHER_IP = 0x800
     ETHER_ARP = 0x806
@@ -63,7 +71,7 @@ class CapFlow(app_manager.RyuApp):
         util.add_flow(datapath,
             parser.OFPMatch(),
             [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)],
-            priority=2,
+            priority=Priority.DEFAULT,
         )
 
         # So we don't need to learn auth server location
@@ -101,7 +109,7 @@ class CapFlow(app_manager.RyuApp):
                     eth_type=Proto.ETHER_ARP,
                 ),
                 [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)],
-                priority=1000,
+                priority=Priority.ARP,
                 msg=msg, in_port=in_port,
             )
 
@@ -136,7 +144,7 @@ class CapFlow(app_manager.RyuApp):
                     eth_dst=nw_dst,
                 ),
                 [parser.OFPActionOutput(out_port), ],
-                priority=100,
+                priority=Priority.PAID,
                 msg=msg, in_port=in_port,
             )
 
@@ -197,7 +205,7 @@ class CapFlow(app_manager.RyuApp):
                  parser.OFPActionSetField(eth_src=nw_dst),
                  parser.OFPActionOutput(in_port)
                 ],
-                priority=1000,
+                priority=Priority.HIJACK,
             )
             # Forward rule
             util.add_flow(datapath, fwd_match,
@@ -205,7 +213,7 @@ class CapFlow(app_manager.RyuApp):
                  parser.OFPActionSetField(eth_dst=config.AUTH_SERVER_MAC),
                  parser.OFPActionOutput(config.AUTH_SERVER_PORT)
                 ],
-                priority=1000,
+                priority=Priority.HIJACK,
                 msg=msg, in_port=in_port,
             )
 
@@ -218,7 +226,7 @@ class CapFlow(app_manager.RyuApp):
                     ip_proto=ip_proto,
                 ),
                 [],
-                priority=10,
+                priority=Priority.UNKNOWN,
                 msg=msg, in_port=in_port,
             )
 
