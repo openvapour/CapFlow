@@ -31,6 +31,7 @@ class Proto(object):
     IP_TCP = 6
     TCP_HTTP = 80
     UDP_DNS = 53
+    TCP_DNS = 53
 
 
 class CapFlow(app_manager.RyuApp):
@@ -139,37 +140,59 @@ class CapFlow(app_manager.RyuApp):
                 msg=msg, in_port=in_port,
             )
 
-        def install_dns_fwd(nw_src, nw_dst, out_port):
-            util.add_flow(datapath,
-                parser.OFPMatch(
-                    eth_src=nw_src,
-                    eth_dst=nw_dst,
-                    eth_type=Proto.ETHER_IP,
-                    ip_proto=Proto.IP_UDP,
-                    udp_dst=Proto.UDP_DNS,
-                ),
-                [parser.OFPActionOutput(out_port)],
-                priority=100,
-                msg=msg, in_port=in_port,
-            )
-
-        def install_http_nat(nw_src, nw_dst, ip_src, ip_dst, tcp_src, tcp_dst):
+        def install_hijack(nw_src, nw_dst, ip_src, ip_dst, tp_src, tp_dst, tp):
             # TODO: we do not change port right now so it might collide with
             # other connections from the host. This is unlikely though
 
+            if tp == "tcp":
+                rev_match = parser.OFPMatch(
+                              in_port=config.AUTH_SERVER_PORT,
+                              eth_src=config.AUTH_SERVER_MAC,
+                              eth_dst=nw_src,
+                              eth_type=Proto.ETHER_IP,
+                              ipv4_src=config.AUTH_SERVER_IP,
+                              ipv4_dst=ip_src,
+                              ip_proto=Proto.IP_TCP,
+                              tcp_dst=tp_src,
+                              tcp_src=tp_dst
+                          )
+                fwd_match = parser.OFPMatch(
+                              in_port=in_port,
+                              eth_src=nw_src,
+                              eth_dst=nw_dst,
+                              eth_type=Proto.ETHER_IP,
+                              ipv4_src=ip_src,
+                              ipv4_dst=ip_dst,
+                              ip_proto=Proto.IP_TCP,
+                              tcp_dst=tp_dst,
+                              tcp_src=tp_src
+                          )
+            elif tp == "udp":
+                rev_match = parser.OFPMatch(
+                              in_port=config.AUTH_SERVER_PORT,
+                              eth_src=config.AUTH_SERVER_MAC,
+                              eth_dst=nw_src,
+                              eth_type=Proto.ETHER_IP,
+                              ipv4_src=config.AUTH_SERVER_IP,
+                              ipv4_dst=ip_src,
+                              ip_proto=Proto.IP_UDP,
+                              udp_dst=tp_src,
+                              udp_src=tp_dst
+                          )
+                fwd_match = parser.OFPMatch(
+                              in_port=in_port,
+                              eth_src=nw_src,
+                              eth_dst=nw_dst,
+                              eth_type=Proto.ETHER_IP,
+                              ipv4_src=ip_src,
+                              ipv4_dst=ip_dst,
+                              ip_proto=Proto.IP_UDP,
+                              udp_dst=tp_dst,
+                              udp_src=tp_src
+                          )
+
             # Reverse rule goes first
-            util.add_flow(datapath,
-                parser.OFPMatch(
-                    in_port=config.AUTH_SERVER_PORT,
-                    eth_src=config.AUTH_SERVER_MAC,
-                    eth_dst=nw_src,
-                    eth_type=Proto.ETHER_IP,
-                    ip_proto=Proto.IP_TCP,
-                    ipv4_src=config.AUTH_SERVER_IP,
-                    ipv4_dst=ip_src,
-                    tcp_dst=tcp_src,
-                    tcp_src=tcp_dst,
-                ),
+            util.add_flow(datapath, rev_match,
                 [parser.OFPActionSetField(ipv4_src=ip_dst),
                  parser.OFPActionSetField(eth_src=nw_dst),
                  parser.OFPActionOutput(in_port)
@@ -177,18 +200,7 @@ class CapFlow(app_manager.RyuApp):
                 priority=1000,
             )
             # Forward rule
-            util.add_flow(datapath,
-                parser.OFPMatch(
-                    in_port=in_port,
-                    eth_src=nw_src,
-                    eth_dst=nw_dst,
-                    eth_type=Proto.ETHER_IP,
-                    ip_proto=Proto.IP_TCP,
-                    ipv4_src=ip_src,
-                    ipv4_dst=ip_dst,
-                    tcp_dst=tcp_dst,
-                    tcp_src=tcp_src,
-                ),
+            util.add_flow(datapath, fwd_match,
                 [parser.OFPActionSetField(ipv4_dst=config.AUTH_SERVER_IP),
                  parser.OFPActionSetField(eth_dst=config.AUTH_SERVER_MAC),
                  parser.OFPActionOutput(config.AUTH_SERVER_PORT)
@@ -242,22 +254,27 @@ class CapFlow(app_manager.RyuApp):
             return
         # Client is not authenticated
         if ip.proto == 1:
-            self.logger.info("ICMP, ignore")
+            # Ignore ICMP traffic
             return
         if ip.proto == Proto.IP_UDP:
             _udp = pkt.get_protocols(udp.udp)[0]
             if _udp.dst_port == Proto.UDP_DNS:
-                self.logger.info("Install DNS bypass")
-                install_dns_fwd(nw_src, nw_dst, out_port)
+                self.logger.info("Install DNS hijack flow")
+                install_hijack(nw_src, nw_dst, ip.src, ip.dst,
+                                 _udp.src_port, _udp.dst_port, "udp")
             else:
-                self.logger.info("Unknown UDP proto, ignore")
+                # Ignore unknown UDP traffic
                 return
         elif ip.proto == Proto.IP_TCP:
             _tcp = pkt.get_protocols(tcp.tcp)[0]
             if _tcp.dst_port == Proto.TCP_HTTP:
-                self.logger.info("Is HTTP traffic, installing NAT entry %d", in_port)
-                install_http_nat(nw_src, nw_dst, ip.src, ip.dst,
-                                 _tcp.src_port, _tcp.dst_port)
+                self.logger.info("Install HTTP hijack flow for port %d", in_port)
+                install_hijack(nw_src, nw_dst, ip.src, ip.dst,
+                                 _tcp.src_port, _tcp.dst_port, "tcp")
+            elif _tcp.dst_port == Proto.TCP_DNS:
+                self.logger.info("Install DNS hijack flow")
+                install_hijack(nw_src, nw_dst, ip.src, ip.dst,
+                                 _tcp.src_port, _tcp.dst_port, "tcp")
         else:
             self.logger.info("Unknown IP proto, dropping")
             drop_unknown_ip(nw_src, nw_dst, ip.proto)
